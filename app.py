@@ -1,4 +1,6 @@
 import json
+import re
+import time
 from google import genai
 from google.genai import types
 import streamlit as st
@@ -168,16 +170,36 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
 
                             parts_payload.insert(0, prompt)
 
-                            # Gemini Call (using standard supported flash model string)
-                            ai_response = client.models.generate_content(
-                                model="gemini-3.5-flash",
-                                contents=parts_payload,
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json"
-                                ),
-                            )
+                            # Gemini Call with Retry Logic for 429 Errors
+                            ai_response = None
+                            for attempt in range(3):
+                                try:
+                                    ai_response = client.models.generate_content(
+                                        model="gemini-2.5-flash",
+                                        contents=parts_payload,
+                                        config=types.GenerateContentConfig(
+                                            response_mime_type="application/json"
+                                        ),
+                                    )
+                                    break
+                                except Exception as err:
+                                    if "429" in str(err) and attempt < 2:
+                                        st.warning(
+                                            "⏳ Hit free-tier limit. Pausing 30 seconds before retrying..."
+                                        )
+                                        time.sleep(30)
+                                    else:
+                                        raise err
 
-                            res = json.loads(ai_response.text)
+                            # Clean Regex JSON Extraction to avoid parsing crash
+                            raw_text = ai_response.text.strip()
+                            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+                            if match:
+                                clean_json_str = match.group(0)
+                                res = json.loads(clean_json_str)
+                            else:
+                                res = json.loads(raw_text)
 
                             # Display Key Metrics on Screen
                             m1, m2, m3, m4 = st.columns(4)
