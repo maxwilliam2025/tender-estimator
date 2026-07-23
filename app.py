@@ -14,7 +14,7 @@ st.set_page_config(
 
 st.title("🏢 Commercial & Residential Property Estimator")
 st.caption(
-    "AI-Powered Site & Window Cleaning Assessment for Single Operatives"
+    "AI-Powered Site & Cleaning Assessment for Single Operatives with Scope Selection"
 )
 
 # ---------------------------------------------------------
@@ -30,10 +30,10 @@ with st.sidebar:
 
     st.subheader("Base Operative Rates")
     base_ground_mins = st.number_input(
-        "Ground Floor (Mins / Window)", value=3.0, step=0.5
+        "Ground Floor Base (Mins / Unit)", value=3.0, step=0.5
     )
     base_upper_mins = st.number_input(
-        "Upper Floors (Mins / Window)", value=5.0, step=0.5
+        "Upper Floors Base (Mins / Unit)", value=5.0, step=0.5
     )
     setup_buffer_mins = st.number_input(
         "Fixed Site Setup Buffer (Mins)",
@@ -60,7 +60,7 @@ for i in range(st.session_state.property_count):
     st.markdown("---")
     st.subheader(f"Property #{i+1}")
 
-    col_a, col_b, col_c = st.columns([2, 1.5, 3])
+    col_a, col_b, col_c = st.columns([2, 2, 3])
 
     with col_a:
         prop_name = st.text_input(
@@ -68,11 +68,23 @@ for i in range(st.session_state.property_count):
             placeholder="e.g. Oakridge House / Unit B",
             key=f"pname_{i}",
         )
-    with col_b:
         postcode = st.text_input(
             f"Postcode (Property {i+1}):",
             placeholder="e.g. SW1A 1AA",
             key=f"postcode_{i}",
+        )
+    with col_b:
+        scope = st.selectbox(
+            f"Scope of Cleaning (Property {i+1}):",
+            options=[
+                "External windows",
+                "Internal windows",
+                "External and Internal windows",
+                "External and Internal Communals",
+                "External Communals",
+                "Internal Communals",
+            ],
+            key=f"scope_{i}",
         )
     with col_c:
         uploaded_imgs = st.file_uploader(
@@ -80,13 +92,14 @@ for i in range(st.session_state.property_count):
             type=["jpg", "png", "jpeg"],
             accept_multiple_files=True,
             key=f"imgs_{i}",
-            help="Upload front, side, and rear photos for higher accuracy.",
+            help="Upload front, side, communal areas, and rear photos for higher accuracy.",
         )
 
     portfolio_inputs.append({
         "id": i + 1,
         "name": prop_name,
         "postcode": postcode,
+        "scope": scope,
         "images": uploaded_imgs,
     })
 
@@ -116,6 +129,7 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
             # Container card for each property report
             with st.container():
                 st.markdown(f"### 📍 {prop_label} {postcode_label}")
+                st.caption(f"🎯 **Cleaning Scope Selected:** {prop['scope']}")
 
                 if not prop["images"]:
                     st.warning(
@@ -136,25 +150,34 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
                                     )
                                 )
 
-                            # Expert Estimator Prompt
+                            # Expert Estimator Prompt incorporating scope logic
                             prompt = f"""
-                            You are a senior master facility estimator specializing in commercial and residential window cleaning.
+                            You are a senior master facility estimator specializing in commercial and residential cleaning.
                             
                             Property Name: "{prop['name']}"
                             Postcode: "{prop['postcode']}"
+                            Cleaning Scope Requested: "{prop['scope']}"
                             
                             MANDATE:
-                            Do NOT under-commit or under-estimate cleaning minutes for a single operative working alone. Budget conservatively for safety and job profitability.
+                            Do NOT under-commit or under-estimate cleaning minutes for a single operative working alone. Budget conservatively for safety, access difficulty, and job profitability.
+
+                            Scope Rules & Labor Multipliers:
+                            - "External windows": Estimate exterior glass surfaces, frame heights, and reach requirements.
+                            - "Internal windows": Estimate interior glass access, internal obstacles (blinds, sills, furniture), and indoor gear setup.
+                            - "External and Internal windows": Must double the glass surface cleaning work and add internal access maneuver time.
+                            - "External Communals": Focus on main entrance glass, communal ground glass, exterior porches, and shared canopy features.
+                            - "Internal Communals": Focus on shared stairwells, hallway glazing, entryway double doors, and high-traffic communal glass.
+                            - "External and Internal Communals": Combine both internal and external communal entryways, stairwells, and shared glazing.
 
                             Tasks:
                             1. Count total visible stories/floors.
-                            2. Count ground floor windows vs upper floor windows.
-                            3. Evaluate visual obstacles: frame types, high reach access, sloping ground, overhangs, glass extensions, foliage, etc.
+                            2. Count target glass/window panes relevant to the chosen scope.
+                            3. Evaluate visual obstacles: frame types, high reach access, sloping ground, overhangs, staircases, foliage, indoor obstacles, etc.
                             4. Compute single operative time budget:
-                               - Ground base: {base_ground_mins} mins/window
-                               - Upper base: {base_upper_mins} mins/window
-                               - Setup buffer: {setup_buffer_mins} mins
-                               - Add relevant minute buffers for complexity.
+                               - Ground base rate: {base_ground_mins} mins per window/unit.
+                               - Upper base rate: {base_upper_mins} mins per window/unit.
+                               - Setup buffer: {setup_buffer_mins} mins base.
+                               - Add appropriate minute buffers for the specific selected scope and complexity.
 
                             Return strictly valid JSON matching this schema:
                             {{
@@ -164,13 +187,13 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
                                 "upper_windows": int,
                                 "single_operative_time_minutes": float,
                                 "single_operative_time_hours": float,
-                                "major_building_info_and_factors": "Detailed explanation highlighting key features, access obstacles, equipment needs, and time justification."
+                                "major_building_info_and_factors": "Detailed explanation highlighting key visual features, chosen scope adjustments, access obstacles, equipment needs, and time justification."
                             }}
                             """
 
                             parts_payload.insert(0, prompt)
 
-                            # Gemini Call with Retry Logic for 429 Errors
+                            # Gemini Call with Retry Logic for Rate Limits
                             ai_response = None
                             for attempt in range(3):
                                 try:
@@ -185,13 +208,13 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
                                 except Exception as err:
                                     if "429" in str(err) and attempt < 2:
                                         st.warning(
-                                            "⏳ Hit free-tier limit. Pausing 30 seconds before retrying..."
+                                            "⏳ Hit rate limit. Pausing 30 seconds before retrying..."
                                         )
                                         time.sleep(30)
                                     else:
                                         raise err
 
-                            # Clean Regex JSON Extraction to avoid parsing crash
+                            # Clean Regex JSON Extraction
                             raw_text = ai_response.text.strip()
                             match = re.search(r"\{.*\}", raw_text, re.DOTALL)
 
@@ -205,7 +228,7 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
                             m1, m2, m3, m4 = st.columns(4)
                             m1.metric("Stories / Floors", res["stories_count"])
                             m2.metric(
-                                "Total Windows", res["total_window_count"]
+                                "Target Windows/Units", res["total_window_count"]
                             )
                             m3.metric(
                                 "Operative Time (Mins)",
@@ -218,7 +241,7 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
 
                             # Detailed On-Screen Analysis Box
                             st.markdown(
-                                "**🔍 Expert Site Inspection & Major Factors:**"
+                                f"**🔍 Expert Site Inspection & Factors ({prop['scope']}):**"
                             )
                             st.info(res["major_building_info_and_factors"])
 
