@@ -1,21 +1,22 @@
 import json
 from google import genai
 from google.genai import types
-import pandas as pd
 import streamlit as st
 
 # Streamlit Page Setup
 st.set_page_config(
-    page_title="Expert Property & Window Cleaning Estimator",
+    page_title="Expert Single-Operative Site Estimator",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🏢 Expert Commercial & Residential Property Estimator")
-st.caption("AI-Powered Site & Window Cleaning Assessment for Single Operatives (Conservative Time Budgeting)")
+st.title("🏢 Commercial & Residential Property Estimator")
+st.caption(
+    "AI-Powered Site & Window Cleaning Assessment for Single Operatives"
+)
 
 # ---------------------------------------------------------
-# SIDEBAR: API KEY & ESTIMATION PARAMETERS
+# SIDEBAR: CONFIGURATION & RATES
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Settings & Rates")
@@ -33,12 +34,14 @@ with st.sidebar:
         "Upper Floors (Mins / Window)", value=5.0, step=0.5
     )
     setup_buffer_mins = st.number_input(
-        "Fixed Site Setup Buffer (Mins)", value=15.0, step=5.0,
-        help="Time for setting up equipment, safety checks, and unpacking gear."
+        "Fixed Site Setup Buffer (Mins)",
+        value=15.0,
+        step=5.0,
+        help="Time for setting up equipment, safety checks, and gear unpacking.",
     )
 
 # ---------------------------------------------------------
-# MAIN FORM: MULTI-PROPERTY INPUTS
+# MAIN FORM: PROPERTY INPUTS
 # ---------------------------------------------------------
 if "property_count" not in st.session_state:
     st.session_state.property_count = 1
@@ -71,11 +74,11 @@ for i in range(st.session_state.property_count):
         )
     with col_c:
         uploaded_imgs = st.file_uploader(
-            f"Upload Property Image(s) (Multiple Allowed):",
+            "Upload Property Image(s) (Multiple Allowed):",
             type=["jpg", "png", "jpeg"],
             accept_multiple_files=True,
             key=f"imgs_{i}",
-            help="Upload front, side, and rear photos for higher estimation accuracy.",
+            help="Upload front, side, and rear photos for higher accuracy.",
         )
 
     portfolio_inputs.append({
@@ -88,133 +91,118 @@ for i in range(st.session_state.property_count):
 st.markdown("---")
 
 # ---------------------------------------------------------
-# PROCESSING LOGIC & AI ESTIMATION
+# PROCESSING & DIRECT ON-SCREEN OUTPUT
 # ---------------------------------------------------------
 if st.button("🚀 Calculate Expert Site & Time Estimates"):
     if not gemini_key:
         st.error("Please enter your free Gemini API Key in the left sidebar.")
     else:
         client = genai.Client(api_key=gemini_key)
-        results = []
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        st.markdown("## 📋 Site Estimation Reports")
 
-        for idx, prop in enumerate(portfolio_inputs):
-            prop_display = prop["name"] or f"Property #{prop['id']}"
-            status_text.text(f"Analyzing {prop_display} ({prop['postcode']})...")
+        for prop in portfolio_inputs:
+            prop_label = (
+                prop["name"]
+                if prop["name"]
+                else f"Property #{prop['id']}"
+            )
+            postcode_label = (
+                f"({prop['postcode']})" if prop["postcode"] else ""
+            )
 
-            if not prop["images"]:
-                results.append({
-                    "Property Name": prop["name"] or f"Property #{prop['id']}",
-                    "Postcode": prop["postcode"] or "N/A",
-                    "Stories Count": "N/A",
-                    "Est. Single Operative Time (Mins)": "N/A",
-                    "Est. Time (Hours)": "N/A",
-                    "Major Visual Factors & Site Information": "No property photos uploaded for visual analysis.",
-                })
-            else:
-                try:
-                    # Package photos for multimodal prompt
-                    parts_payload = []
-                    for file in prop["images"]:
-                        file_bytes = file.read()
-                        parts_payload.append(
-                            types.Part.from_bytes(
-                                data=file_bytes, mime_type=file.type
-                            )
-                        )
+            # Container card for each property report
+            with st.container():
+                st.markdown(f"### 📍 {prop_label} {postcode_label}")
 
-                    # Prompt instructing Gemini as an expert estimator
-                    prompt = f"""
-                    You are a veteran, master facility estimator and senior operations manager specializing in commercial and residential window cleaning & exterior maintenance.
-                    
-                    Property Name: "{prop['name']}"
-                    Postcode: "{prop['postcode']}"
-                    
-                    Your Core Mandate:
-                    Do NOT under-commit or under-estimate minutes for a single operative working alone. Always budget conservatively to ensure job profitability and safety compliance.
-
-                    Visual Assessment Tasks:
-                    1. Count the exact number of stories/floors visible in the property photos.
-                    2. Count total window panes (separating ground floor vs upper floors).
-                    3. Identify all major building features and site complexity factors from the photos, including:
-                       - Window frame types (Georgian mullions, floor-to-ceiling glass, skylights, leaded glass, dormers).
-                       - Access issues (high elevation, glass extensions, narrow alleys, overhanging foliage/trees, uneven terrain, sloped roofs).
-                       - Equipment requirements (water-fed pole reach, ladder repositioning, safety harness, interior furniture obstacles).
-                    
-                    Time Calculation Rules (Single Operative):
-                    - Ground Floor Base: {base_ground_mins} minutes per window.
-                    - Upper Floor Base: {base_upper_mins} minutes per window (accounts for pole/ladder maneuvering).
-                    - Fixed Site Setup Buffer: Add {setup_buffer_mins} minutes for unpacking, hose setup, and initial safety walk.
-                    - Add additional minute buffers for any detected site complexity, access obstacles, or intricate frame detailing.
-
-                    Return strictly valid JSON matching this schema:
-                    {{
-                        "stories_count": int or str,
-                        "total_window_count": int,
-                        "ground_windows": int,
-                        "upper_windows": int,
-                        "single_operative_time_minutes": float,
-                        "single_operative_time_hours": float,
-                        "major_building_info_and_factors": "Detailed bulleted list or paragraph highlighting the key visual features, access complexity, equipment needs, and justification for the time estimate."
-                    }}
-                    """
-
-                    parts_payload.insert(0, prompt)
-
-                    # Call Gemini API
-                    ai_response = client.models.generate_content(
-                        model="gemini-3.5-flash",
-                        contents=parts_payload,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"
-                        ),
+                if not prop["images"]:
+                    st.warning(
+                        "⚠️ No images uploaded for this property. Visual analysis could not be performed."
                     )
+                else:
+                    with st.spinner(
+                        f"Analyzing visual factors for {prop_label}..."
+                    ):
+                        try:
+                            # Package images
+                            parts_payload = []
+                            for file in prop["images"]:
+                                file_bytes = file.read()
+                                parts_payload.append(
+                                    types.Part.from_bytes(
+                                        data=file_bytes, mime_type=file.type
+                                    )
+                                )
 
-                    res_json = json.loads(ai_response.text)
+                            # Expert Estimator Prompt
+                            prompt = f"""
+                            You are a senior master facility estimator specializing in commercial and residential window cleaning.
+                            
+                            Property Name: "{prop['name']}"
+                            Postcode: "{prop['postcode']}"
+                            
+                            MANDATE:
+                            Do NOT under-commit or under-estimate cleaning minutes for a single operative working alone. Budget conservatively for safety and job profitability.
 
-                    results.append({
-                        "Property Name": prop["name"] or f"Property #{prop['id']}",
-                        "Postcode": prop["postcode"] or "N/A",
-                        "Stories Count": res_json["stories_count"],
-                        "Est. Single Operative Time (Mins)": round(
-                            res_json["single_operative_time_minutes"], 1
-                        ),
-                        "Est. Time (Hours)": round(
-                            res_json["single_operative_time_hours"], 2
-                        ),
-                        "Major Visual Factors & Site Information": res_json[
-                            "major_building_info_and_factors"
-                        ],
-                    })
+                            Tasks:
+                            1. Count total visible stories/floors.
+                            2. Count ground floor windows vs upper floor windows.
+                            3. Evaluate visual obstacles: frame types, high reach access, sloping ground, overhangs, glass extensions, foliage, etc.
+                            4. Compute single operative time budget:
+                               - Ground base: {base_ground_mins} mins/window
+                               - Upper base: {base_upper_mins} mins/window
+                               - Setup buffer: {setup_buffer_mins} mins
+                               - Add relevant minute buffers for complexity.
 
-                except Exception as e:
-                    results.append({
-                        "Property Name": prop["name"] or f"Property #{prop['id']}",
-                        "Postcode": prop["postcode"] or "N/A",
-                        "Stories Count": "Error",
-                        "Est. Single Operative Time (Mins)": "Error",
-                        "Est. Time (Hours)": "Error",
-                        "Major Visual Factors & Site Information": f"Analysis failed: {str(e)}",
-                    })
+                            Return strictly valid JSON matching this schema:
+                            {{
+                                "stories_count": int or str,
+                                "total_window_count": int,
+                                "ground_windows": int,
+                                "upper_windows": int,
+                                "single_operative_time_minutes": float,
+                                "single_operative_time_hours": float,
+                                "major_building_info_and_factors": "Detailed explanation highlighting key features, access obstacles, equipment needs, and time justification."
+                            }}
+                            """
 
-            progress_bar.progress((idx + 1) / len(portfolio_inputs))
+                            parts_payload.insert(0, prompt)
 
-        status_text.text("Processing complete!")
+                            # Gemini Call (using standard supported flash model string)
+                            ai_response = client.models.generate_content(
+                                model="gemini-2.5-flash",
+                                contents=parts_payload,
+                                config=types.GenerateContentConfig(
+                                    response_mime_type="application/json"
+                                ),
+                            )
 
-        # ---------------------------------------------------------
-        # DISPLAY RESULTS
-        # ---------------------------------------------------------
-        st.subheader("📊 Master Estimation Table")
-        df = pd.DataFrame(results)
-        st.dataframe(df, use_container_width=True)
+                            res = json.loads(ai_response.text)
 
-        # Download option
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Download Full Tender Report as CSV",
-            data=csv,
-            file_name="expert_property_cleaning_estimates.csv",
-            mime="text/csv",
-        )
+                            # Display Key Metrics on Screen
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("Stories / Floors", res["stories_count"])
+                            m2.metric(
+                                "Total Windows", res["total_window_count"]
+                            )
+                            m3.metric(
+                                "Operative Time (Mins)",
+                                f"{round(res['single_operative_time_minutes'], 1)} mins",
+                            )
+                            m4.metric(
+                                "Operative Time (Hours)",
+                                f"{round(res['single_operative_time_hours'], 2)} hrs",
+                            )
+
+                            # Detailed On-Screen Analysis Box
+                            st.markdown(
+                                "**🔍 Expert Site Inspection & Major Factors:**"
+                            )
+                            st.info(res["major_building_info_and_factors"])
+
+                        except Exception as e:
+                            st.error(
+                                f"An error occurred while analyzing {prop_label}: {e}"
+                            )
+
+                st.markdown("---")
