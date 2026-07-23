@@ -175,7 +175,7 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
                             for attempt in range(3):
                                 try:
                                     ai_response = client.models.generate_content(
-                                        model="gemini-2.5-flash",
+                                        model="gemini-3.5-flash",
                                         contents=parts_payload,
                                         config=types.GenerateContentConfig(
                                             response_mime_type="application/json"
