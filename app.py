@@ -1,169 +1,220 @@
 import json
-import requests
-
 from google import genai
 from google.genai import types
+import pandas as pd
 import streamlit as st
 
-# Setup page
+# Streamlit Page Setup
 st.set_page_config(
-    page_title="Free Open-Source Tender Estimator", layout="wide"
-)
-st.title("🏗️ Free Multi-View AI Tender Estimator")
-st.caption(
-    "Combines Satellite Aerial View + Optional Front Elevation View (Zero-Cost)"
+    page_title="Expert Property & Window Cleaning Estimator",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# Sidebar configuration
+st.title("🏢 Expert Commercial & Residential Property Estimator")
+st.caption("AI-Powered Site & Window Cleaning Assessment for Single Operatives (Conservative Time Budgeting)")
+
+# ---------------------------------------------------------
+# SIDEBAR: API KEY & ESTIMATION PARAMETERS
+# ---------------------------------------------------------
 with st.sidebar:
-    st.header("1. Setup & Rates")
+    st.header("⚙️ Settings & Rates")
     gemini_key = st.text_input(
-        "Free Gemini API Key:", type="password", help="From aistudio.google.com"
+        "Free Gemini API Key:",
+        type="password",
+        help="Get your free key from aistudio.google.com",
     )
 
-    st.subheader("Contractor Rate Matrix")
-    base_rate = st.number_input("Base Rate per Meter ($)", value=6.00)
-    story_2_mult = st.number_input("2-Story Multiplier", value=1.20)
-    story_3_mult = st.number_input("3+ Story Multiplier", value=1.50)
-    access_surcharge = st.number_input("Access Surcharge ($)", value=150.00)
-
-# Main Form
-st.subheader("2. Property Information")
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    address_input = st.text_input(
-        "Full Address / Building Name & Postcode:",
-        placeholder="e.g. 10 Downing Street, London, SW1A 2AA",
+    st.subheader("Base Operative Rates")
+    base_ground_mins = st.number_input(
+        "Ground Floor (Mins / Window)", value=3.0, step=0.5
     )
-    uploaded_street_view = st.file_uploader(
-        "Optional: Drag & Drop Front/Street View Screenshot (Enhances Story & Access Accuracy):",
-        type=["jpg", "jpeg", "png"],
+    base_upper_mins = st.number_input(
+        "Upper Floors (Mins / Window)", value=5.0, step=0.5
+    )
+    setup_buffer_mins = st.number_input(
+        "Fixed Site Setup Buffer (Mins)", value=15.0, step=5.0,
+        help="Time for setting up equipment, safety checks, and unpacking gear."
     )
 
-with col2:
-    scope = st.selectbox(
-        "Scope of Work:", ["Gutter Cleaning", "Window Cleaning", "Roof Inspection"]
-    )
+# ---------------------------------------------------------
+# MAIN FORM: MULTI-PROPERTY INPUTS
+# ---------------------------------------------------------
+if "property_count" not in st.session_state:
+    st.session_state.property_count = 1
 
-if st.button("Generate Combined Tender Estimate"):
+col_top1, col_top2 = st.columns([1, 4])
+with col_top1:
+    if st.button("➕ Add Another Property"):
+        st.session_state.property_count += 1
+        st.rerun()
+
+portfolio_inputs = []
+
+for i in range(st.session_state.property_count):
+    st.markdown("---")
+    st.subheader(f"Property #{i+1}")
+
+    col_a, col_b, col_c = st.columns([2, 1.5, 3])
+
+    with col_a:
+        prop_name = st.text_input(
+            f"Property Name (Property {i+1}):",
+            placeholder="e.g. Oakridge House / Unit B",
+            key=f"pname_{i}",
+        )
+    with col_b:
+        postcode = st.text_input(
+            f"Postcode (Property {i+1}):",
+            placeholder="e.g. SW1A 1AA",
+            key=f"postcode_{i}",
+        )
+    with col_c:
+        uploaded_imgs = st.file_uploader(
+            f"Upload Property Image(s) (Multiple Allowed):",
+            type=["jpg", "png", "jpeg"],
+            accept_multiple_files=True,
+            key=f"imgs_{i}",
+            help="Upload front, side, and rear photos for higher estimation accuracy.",
+        )
+
+    portfolio_inputs.append({
+        "id": i + 1,
+        "name": prop_name,
+        "postcode": postcode,
+        "images": uploaded_imgs,
+    })
+
+st.markdown("---")
+
+# ---------------------------------------------------------
+# PROCESSING LOGIC & AI ESTIMATION
+# ---------------------------------------------------------
+if st.button("🚀 Calculate Expert Site & Time Estimates"):
     if not gemini_key:
-        st.error("Please enter your free Gemini API Key in the sidebar.")
-    elif not address_input:
-        st.warning("Please enter a property address or postcode.")
+        st.error("Please enter your free Gemini API Key in the left sidebar.")
     else:
-        with st.spinner("Processing satellite and street view imagery..."):
-            try:
-                # 1. Fetch Aerial View automatically via OpenStreetMap & Esri
-                headers = {"User-Agent": "FreeTenderEstimatorApp/1.0"}
-                geo_url = f"https://nominatim.openstreetmap.org/search?q={address_input}&format=json&limit=1"
-                geo_res = requests.get(geo_url, headers=headers).json()
+        client = genai.Client(api_key=gemini_key)
+        results = []
 
-                if not geo_res:
-                    st.error("Address not found. Please check spelling.")
-                else:
-                    lat, lon = geo_res[0]["lat"], geo_res[0]["lon"]
-                    delta = 0.0008
-                    bbox = f"{float(lon)-delta},{float(lat)-delta},{float(lon)+delta},{float(lat)+delta}"
-                    esri_url = f"https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox={bbox}&bboxSR=4326&size=800,600&imageSR=4326&format=png&f=image"
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-                    aerial_bytes = requests.get(esri_url).content
+        for idx, prop in enumerate(portfolio_inputs):
+            prop_display = prop["name"] or f"Property #{prop['id']}"
+            status_text.text(f"Analyzing {prop_display} ({prop['postcode']})...")
 
-                    # Display images on screen
-                    img_col1, img_col2 = st.columns(2)
-                    with img_col1:
-                        st.image(
-                            aerial_bytes,
-                            caption="Top View: Aerial Satellite (Perimeter)",
-                            use_container_width=True,
-                        )
-
-                    contents_payload = [
-                        types.Part.from_bytes(
-                            data=aerial_bytes, mime_type="image/png"
-                        )
-                    ]
-
-                    if uploaded_street_view is not None:
-                        street_bytes = uploaded_street_view.read()
-                        with img_col2:
-                            st.image(
-                                street_bytes,
-                                caption="Front View: Uploaded Elevation (Stories & Access)",
-                                use_container_width=True,
-                            )
-                        contents_payload.append(
+            if not prop["images"]:
+                results.append({
+                    "Property Name": prop["name"] or f"Property #{prop['id']}",
+                    "Postcode": prop["postcode"] or "N/A",
+                    "Stories Count": "N/A",
+                    "Est. Single Operative Time (Mins)": "N/A",
+                    "Est. Time (Hours)": "N/A",
+                    "Major Visual Factors & Site Information": "No property photos uploaded for visual analysis.",
+                })
+            else:
+                try:
+                    # Package photos for multimodal prompt
+                    parts_payload = []
+                    for file in prop["images"]:
+                        file_bytes = file.read()
+                        parts_payload.append(
                             types.Part.from_bytes(
-                                data=street_bytes,
-                                mime_type=uploaded_street_view.type,
+                                data=file_bytes, mime_type=file.type
                             )
                         )
 
-                    # 2. Configure AI Client & Prompt
-                    client = genai.Client(api_key=gemini_key)
-                    rate_card = {
-                        "base_rate_per_meter": base_rate,
-                        "story_multipliers": {
-                            "1": 1.0,
-                            "2": story_2_mult,
-                            "3+": story_3_mult,
-                        },
-                        "access_surcharge": access_surcharge,
-                    }
-
+                    # Prompt instructing Gemini as an expert estimator
                     prompt = f"""
-                    You are an expert procurement estimator analyzing images for property at {address_input}.
-                    Scope: {scope}.
-                    Rate Matrix Rules: {json.dumps(rate_card)}.
+                    You are a veteran, master facility estimator and senior operations manager specializing in commercial and residential window cleaning & exterior maintenance.
+                    
+                    Property Name: "{prop['name']}"
+                    Postcode: "{prop['postcode']}"
+                    
+                    Your Core Mandate:
+                    Do NOT under-commit or under-estimate minutes for a single operative working alone. Always budget conservatively to ensure job profitability and safety compliance.
 
-                    Instructions:
-                    1. Use the Aerial View photo to calculate exact roof perimeter length in meters.
-                    2. Use the Front Elevation/Street View photo (if provided) to accurately count the stories, property type, and detect access obstacles (scaffolding requirements, conservatories, trees).
-                    3. Calculate the total job tender cost based on the unit rates.
+                    Visual Assessment Tasks:
+                    1. Count the exact number of stories/floors visible in the property photos.
+                    2. Count total window panes (separating ground floor vs upper floors).
+                    3. Identify all major building features and site complexity factors from the photos, including:
+                       - Window frame types (Georgian mullions, floor-to-ceiling glass, skylights, leaded glass, dormers).
+                       - Access issues (high elevation, glass extensions, narrow alleys, overhanging foliage/trees, uneven terrain, sloped roofs).
+                       - Equipment requirements (water-fed pole reach, ladder repositioning, safety harness, interior furniture obstacles).
+                    
+                    Time Calculation Rules (Single Operative):
+                    - Ground Floor Base: {base_ground_mins} minutes per window.
+                    - Upper Floor Base: {base_upper_mins} minutes per window (accounts for pole/ladder maneuvering).
+                    - Fixed Site Setup Buffer: Add {setup_buffer_mins} minutes for unpacking, hose setup, and initial safety walk.
+                    - Add additional minute buffers for any detected site complexity, access obstacles, or intricate frame detailing.
 
-                    Return ONLY JSON format with keys:
+                    Return strictly valid JSON matching this schema:
                     {{
-                        "estimated_stories": str or int,
-                        "estimated_perimeter_meters": float,
-                        "access_issues_detected": bool,
-                        "access_issues_notes": "description",
-                        "calculation_breakdown": "step by step math",
-                        "total_estimated_price": float
+                        "stories_count": int or str,
+                        "total_window_count": int,
+                        "ground_windows": int,
+                        "upper_windows": int,
+                        "single_operative_time_minutes": float,
+                        "single_operative_time_hours": float,
+                        "major_building_info_and_factors": "Detailed bulleted list or paragraph highlighting the key visual features, access complexity, equipment needs, and justification for the time estimate."
                     }}
                     """
 
-                    contents_payload.insert(0, prompt)
+                    parts_payload.insert(0, prompt)
 
-                    # Use standard current Flash model
+                    # Call Gemini API
                     ai_response = client.models.generate_content(
                         model="gemini-3.5-flash",
-                        contents=contents_payload,
+                        contents=parts_payload,
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json"
                         ),
                     )
 
-                    result = json.loads(ai_response.text)
+                    res_json = json.loads(ai_response.text)
 
-                    # 3. Display Results
-                    st.success("Analysis Complete!")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Est. Stories", result["estimated_stories"])
-                    m2.metric(
-                        "Est. Perimeter",
-                        f"{result['estimated_perimeter_meters']} m",
-                    )
-                    m3.metric(
-                        "Total Quote Price",
-                        f"${result['total_estimated_price']:.2f}",
-                    )
+                    results.append({
+                        "Property Name": prop["name"] or f"Property #{prop['id']}",
+                        "Postcode": prop["postcode"] or "N/A",
+                        "Stories Count": res_json["stories_count"],
+                        "Est. Single Operative Time (Mins)": round(
+                            res_json["single_operative_time_minutes"], 1
+                        ),
+                        "Est. Time (Hours)": round(
+                            res_json["single_operative_time_hours"], 2
+                        ),
+                        "Major Visual Factors & Site Information": res_json[
+                            "major_building_info_and_factors"
+                        ],
+                    })
 
-                    st.subheader("Itemized Breakdown & Reasoning")
-                    st.write(result["calculation_breakdown"])
-                    if result["access_issues_detected"]:
-                        st.warning(
-                            f"Access Flag: {result['access_issues_notes']}"
-                        )
+                except Exception as e:
+                    results.append({
+                        "Property Name": prop["name"] or f"Property #{prop['id']}",
+                        "Postcode": prop["postcode"] or "N/A",
+                        "Stories Count": "Error",
+                        "Est. Single Operative Time (Mins)": "Error",
+                        "Est. Time (Hours)": "Error",
+                        "Major Visual Factors & Site Information": f"Analysis failed: {str(e)}",
+                    })
 
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+            progress_bar.progress((idx + 1) / len(portfolio_inputs))
+
+        status_text.text("Processing complete!")
+
+        # ---------------------------------------------------------
+        # DISPLAY RESULTS
+        # ---------------------------------------------------------
+        st.subheader("📊 Master Estimation Table")
+        df = pd.DataFrame(results)
+        st.dataframe(df, use_container_width=True)
+
+        # Download option
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Download Full Tender Report as CSV",
+            data=csv,
+            file_name="expert_property_cleaning_estimates.csv",
+            mime="text/csv",
+        )
