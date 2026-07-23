@@ -170,7 +170,7 @@ if st.button("🚀 Calculate Expert Site & Time Estimates"):
 
                             # Gemini Call (using standard supported flash model string)
                             ai_response = client.models.generate_content(
-                                model="gemini-3.5-flash",
+                                model="gemini-2.0-flash",
                                 contents=parts_payload,
                                 config=types.GenerateContentConfig(
                                     response_mime_type="application/json"
